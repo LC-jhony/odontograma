@@ -1,0 +1,1 @@
+<livewire:odontogram-board :patient="$record" />

@@ -1,0 +1,26 @@
+@import 'tailwindcss';
+
+@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
+@source '../../storage/framework/views/*.php';
+
+@theme {
+    --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+        'Segoe UI Symbol', 'Noto Color Emoji';
+}
+
+:root {
+    --ink: #24303a;
+    --border: #cbd5e1;
+    --surface-alt: #eef2f6;
+}
+
+.tooth-svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.tooth-wrap {
+    width: 88px;
+    flex-shrink: 0;
+}

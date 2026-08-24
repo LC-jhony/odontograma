@@ -1,0 +1,52 @@
+@import 'tailwindcss';
+@import '../../../../vendor/filament/filament/resources/css/theme.css';
+
+@source '../../../../app/Filament/**/*';
+@source '../../../../resources/views/filament/**/*';
+
+:root {
+    --ink: var(--color-base-content);
+    --surface-alt: var(--color-base-200);
+    --border: var(--color-base-300);
+}
+
+.tooth-wrap {
+    flex-shrink: 0;
+}
+
+.tooth-svg {
+    display: block;
+    width: clamp(40px, 6vw, 54px);
+    aspect-ratio: 100 / 180;
+}
+
+.tooth-svg .zone,
+.tooth-svg text {
+    cursor: pointer;
+}
+
+.fi-topbar {
+    @apply !bg-inherit ring-0 shadow-none;
+}
+
+.fi-sidebar-header {
+    @apply !bg-inherit ring-0 shadow-none;
+}
+
+.fi-ta-row .fi-ta-group-header-row {
+    @apply bg-rose-500 text-white;
+}
+
+.fi-btn[class*="fi-color-"]:is([class*="fi-bg-color-"]) {
+    background-color: var(--color-600) !important;
+    color: white !important;
+}
+
+.fi-btn[class*="fi-color-"]:hover:is([class*="fi-bg-color-"]) {
+    background-color: var(--color-500) !important;
+    color: white !important;
+}
+
+.fi-btn[class*="fi-color-"]:is([class*="fi-bg-color-"]) svg {
+    color: inherit !important;
+}
