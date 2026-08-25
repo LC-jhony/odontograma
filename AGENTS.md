@@ -171,7 +171,7 @@ Laravel 13, PHP 8.5, Filament v5.7 (admin panel), Livewire v4, Pest v5, Tailwind
   - `app/Filament/Pages/OdontogramBoard.php` — page with patient selector + embedded `<livewire:odontogram-board :patient=...>`.
   - `app/Livewire/OdontogramBoard.php` — the actual chart (condition palette, tooth SVGs, findings). Requires a `Patient` on `mount`.
   - `app/Livewire/DentalTreatment.php` — odontogram history table; mounted from `PatientsTable.php` modal/slide-over, and its "Registro odontograma" action opens the board.
-  - Domain helpers in `app/Domain/Odontogram/`: `ToothNumbering` (FDI↔Universal), `RootAnatomy` (root counts), `ToothSvgBuilder` (emits per-tooth SVG with inline `wire:click="selectZone(...)"` and Alpine `@mouseover` handlers).
+  - Domain helpers in `app/Domain/Odontogram/`: `ToothNumbering` (FDI↔Universal), `RootAnatomy` (root counts), `ToothSvgBuilder` (emits per-tooth SVG with Alpine `@click="$wire.selectZone(...)"` and `@mouseover` handlers).
 
 ## Gotchas
 - **Seeders are load-bearing.** `ToothConditionSeeder` + `ToothDefinitionSeeder` must run before the chart works. `ToothSvgBuilder` and `OdontogramTooth::faceMap()` hardcode condition codes (`sano`, `caries`, `corona`, `endodoncia`, `puente`, `implante`, `extraccion`, `ausente`, ...) — do not rename a code without updating both the seeder and the SVG builder.
@@ -187,4 +187,4 @@ Pest feature tests in `tests/Feature/`; run `php artisan test --compact` or `--f
 ## Docs
 - `odontograma-implementacion.md` is the original handoff doc and has drifted (it shows a `LivewireField`-based `PatientForm` and inline theme CSS; current code uses `ViewField` + the Filament page). Read it for intent, not as ground truth.
 - `refactorizacion.md` is a refactoring prompt template, not repo documentation.
-- There is no `.ai/rules/` directory yet — the Boost project-rules workflow above only kicks in once it exists.
+- `.ai/rules/` exists with area-specific rules — read `.ai/rules/index.md` before editing any file whose path matches a glob there. Key trap: SVG elements must use Alpine `@click`, not `wire:click` (Livewire v4 + Alpine doesn't initialize `wire:*` on SVG elements reliably).
