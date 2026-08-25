@@ -2,8 +2,9 @@
 
 namespace App\Livewire;
 
-use App\Models\Odontogram;
+use App\Models\OdontogramTreatmentLog;
 use App\Models\Patient;
+use App\Models\ToothCondition;
 use Filament\Actions\Action;
 use Filament\Actions\Concerns\InteractsWithActions;
 use Filament\Actions\Contracts\HasActions;
@@ -34,18 +35,33 @@ class DentalTreatment extends Component implements HasActions, HasSchemas, HasTa
     public function table(Table $table): Table
     {
         return $table
-            ->query(Odontogram::query()->where('patient_id', $this->patient->id))
+            ->query(
+                OdontogramTreatmentLog::query()
+                    ->whereHas('odontogram', fn ($q) => $q->where('patient_id', $this->patient->id))
+                    ->with('condition')
+            )
             ->striped()
             ->searchable()
             ->paginated([5, 10, 25, 50, 100, 'all'])
             ->defaultPaginationPageOption(5)
             ->columns([
-                TextColumn::make('created_at')
-                    ->label('Registrado')
+                TextColumn::make('fdi_code')
+                    ->label('Diente')
+                    ->sortable(),
+                TextColumn::make('face')
+                    ->label('Cara')
+                    ->formatStateUsing(fn ($state): string => $state ? (ToothCondition::FACE_LABELS[$state] ?? $state) : 'Pieza completa')
+                    ->sortable(),
+                TextColumn::make('condition.label')
+                    ->label('Condición')
+                    ->sortable(),
+                TextColumn::make('observation')
+                    ->label('Observación')
+                    ->limit(50),
+                TextColumn::make('registered_at')
+                    ->label('Fecha')
                     ->dateTime()
                     ->sortable(),
-                TextColumn::make('dentition'),
-                TextColumn::make('numbering_system'),
             ])
             ->filters([
                 // ...
@@ -61,13 +77,12 @@ class DentalTreatment extends Component implements HasActions, HasSchemas, HasTa
                     ->form([
                         ViewField::make('view')
                             ->view('filament.patients.odontogram-board')
-                            ->viewData(fn(): array => ['record' => $this->patient])
+                            ->viewData(fn (): array => ['record' => $this->patient])
                             ->columnSpanFull(),
                     ]),
             ])
             ->recordActions([
-                Action::make('odontogram-edit'),
-                DeleteAction::make()
+                DeleteAction::make(),
             ])
             ->toolbarActions([
                 // ...

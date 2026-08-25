@@ -10,6 +10,7 @@ use App\Models\OdontogramToothFace;
 use App\Models\Patient;
 use App\Models\ToothCondition;
 use App\Models\ToothDefinition;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
@@ -30,6 +31,12 @@ class OdontogramBoard extends Component
 
     public string $saveMessage = '';
 
+    public ?string $notes = null;
+
+    public ?string $examinedAt = null;
+
+    protected $listeners = ['clearSaveMessage'];
+
     /** Cambios pendientes de marcar en el tablero que aún no se han persistido (ver `save`). */
     public array $pending = [];
 
@@ -43,27 +50,31 @@ class OdontogramBoard extends Component
 
     public string $observationText = '';
 
-    /** Etiquetas de cara para la bitácora y el modal de observación. */
-    private const FACE_LABELS = [
-        'v' => 'Vestibular',
-        'o' => 'Oclusal/Incisal',
-        'p' => 'Palatino/Lingual',
-        'm' => 'Mesial',
-        'd' => 'Distal',
-    ];
+    public bool $showToothNoteModal = false;
+
+    public ?int $toothNoteFdiCode = null;
+
+    public string $toothNoteText = '';
 
     public function mount(Patient $patient): void
     {
         $this->patient = $patient;
 
         // Cada paciente tiene un único odontograma sobre el que se registra cada tratamiento.
-        $this->odontogram = $patient->odontogram()->firstOrCreate([
-            'dentition' => $this->dentition,
-            'numbering_system' => $this->numberingSystem,
-        ]);
+        try {
+            $this->odontogram = $patient->odontogram()->firstOrCreate([
+                'dentition' => $this->dentition,
+                'numbering_system' => $this->numberingSystem,
+            ]);
+        } catch (QueryException) {
+            // Race condition: otro request creó el odontograma primero.
+            $this->odontogram = $patient->odontogram()->firstOrFail();
+        }
 
         $this->dentition = $this->odontogram->dentition;
         $this->numberingSystem = $this->odontogram->numbering_system;
+        $this->notes = $this->odontogram->notes;
+        $this->examinedAt = $this->odontogram->examined_at?->format('Y-m-d') ?? now()->format('Y-m-d');
     }
 
     #[Computed]
@@ -220,6 +231,22 @@ class OdontogramBoard extends Component
             'condition_code' => $conditionCode,
             'observation' => $observation,
         ];
+    }
+
+    /** Elimina la última acción pendiente (deshacer). */
+    public function undoPending(): void
+    {
+        if (count($this->pending) > 0) {
+            array_pop($this->pending);
+            unset($this->findings, $this->history);
+        }
+    }
+
+    /** Descarta todos los cambios pendientes. */
+    public function discardPending(): void
+    {
+        $this->pending = [];
+        unset($this->findings, $this->history);
     }
 
     /**
@@ -381,14 +408,14 @@ class OdontogramBoard extends Component
     public function observationZoneLabel(): string
     {
         return $this->observationFace
-            ? (self::FACE_LABELS[$this->observationFace] ?? $this->observationFace)
+            ? (ToothCondition::FACE_LABELS[$this->observationFace] ?? $this->observationFace)
             : 'Pieza completa';
     }
 
     /** Etiqueta legible de una cara para la bitácora. */
     public function faceLabel(?string $face): string
     {
-        return $face ? (self::FACE_LABELS[$face] ?? $face) : 'Pieza completa';
+        return $face ? (ToothCondition::FACE_LABELS[$face] ?? $face) : 'Pieza completa';
     }
 
     public function setDentition(string $value): void
@@ -415,6 +442,7 @@ class OdontogramBoard extends Component
             faceMap: ($state['faces'] ?? []) + OdontogramTooth::DEFAULT_FACE_MAP,
             wholeCode: $state['whole'] ?? null,
             conditionColors: $this->conditionsByCode->map->color->all(),
+            hasNote: $this->toothHasNote($definition->fdi_code),
         );
     }
 
@@ -430,11 +458,64 @@ class OdontogramBoard extends Component
         }
 
         $this->pending = [];
+        $this->odontogram->update([
+            'notes' => $this->notes,
+            'examined_at' => $this->examinedAt,
+        ]);
         $this->odontogram->touch();
         $this->saveMessage = 'Guardado ✓';
         $this->dispatch('odontogram-saved');
+        $this->dispatch('schedule-clear-save-message');
 
         unset($this->teethByCode, $this->findings, $this->history);
+    }
+
+    public function clearSaveMessage(): void
+    {
+        $this->saveMessage = '';
+    }
+
+    public function openToothNote(int $fdiCode): void
+    {
+        $tooth = $this->odontogram->teeth()->where('fdi_code', $fdiCode)->first();
+        $this->toothNoteFdiCode = $fdiCode;
+        $this->toothNoteText = $tooth?->notes ?? '';
+        $this->showToothNoteModal = true;
+    }
+
+    public function saveToothNote(): void
+    {
+        if ($this->toothNoteFdiCode === null) {
+            return;
+        }
+
+        $tooth = $this->odontogram->teeth()->firstOrCreate(['fdi_code' => $this->toothNoteFdiCode]);
+        $tooth->update(['notes' => trim($this->toothNoteText) ?: null]);
+
+        $this->showToothNoteModal = false;
+        $this->toothNoteFdiCode = null;
+        $this->toothNoteText = '';
+        unset($this->teethByCode);
+    }
+
+    public function cancelToothNote(): void
+    {
+        $this->showToothNoteModal = false;
+        $this->toothNoteFdiCode = null;
+        $this->toothNoteText = '';
+    }
+
+    /** Check if a tooth has notes (for the visual indicator). */
+    public function toothHasNote(int $fdiCode): bool
+    {
+        $tooth = $this->teethByCode->get($fdiCode);
+
+        return $tooth && trim((string) $tooth->notes) !== '';
+    }
+
+    public function exportPdf(): void
+    {
+        $this->dispatch('open-pdf', url: route('odontogram.pdf', $this->odontogram));
     }
 
     public function render(): View

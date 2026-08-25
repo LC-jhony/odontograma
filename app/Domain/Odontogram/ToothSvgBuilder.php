@@ -7,13 +7,12 @@ use App\Models\ToothDefinition;
 
 final class ToothSvgBuilder
 {
-    private const FACE_NAMES = [
-        'v' => 'Vestibular',
-        'o' => 'Oclusal/Incisal',
-        'p' => 'Palatino/Lingual',
-        'm' => 'Mesial',
-        'd' => 'Distal',
-    ];
+    /** Colores PDF estáticos (sustituyen las CSS variables del tema). */
+    private const PDF_INK = '#0F2A30';
+
+    private const PDF_SURFACE_ALT = '#F1F5F9';
+
+    private const PDF_BORDER = '#CBD5E1';
 
     /**
      * @param  ToothDefinition  $def  Definición de la pieza (arco, tipo, nº raíces...).
@@ -21,6 +20,7 @@ final class ToothSvgBuilder
      * @param  array<string,string>  $faceMap  ['v' => 'caries', 'o' => 'sano', ...].
      * @param  string|null  $wholeCode  Código de condición de pieza completa (o null).
      * @param  array<string,string>  $conditionColors  ['caries' => '#D6455A', ...].
+     * @param  bool  $interactive  Si false, omite Alpine directives y usa colores hardcoded (para PDF).
      */
     public static function render(
         ToothDefinition $def,
@@ -28,6 +28,8 @@ final class ToothSvgBuilder
         array $faceMap,
         ?string $wholeCode,
         array $conditionColors,
+        bool $hasNote = false,
+        bool $interactive = true,
     ): string {
         $code = $def->fdi_code;
         $isLower = $def->isLower();
@@ -47,12 +49,12 @@ final class ToothSvgBuilder
         $bridgeY = $isLower ? 158 : 24;
         $uid = 't'.$code;
 
-        $rootPoly = self::buildRoots($def->root_count, $rootBaseY, $rootApexY, $uid, $endo);
+        $rootPoly = self::buildRoots($def->root_count, $rootBaseY, $rootApexY, $uid, $endo, $interactive);
 
         $defs = self::buildDefs($uid, $crownTop, $endo);
 
         $crownContent = $implant
-            ? self::buildImplant($crownTop, $uid)
+            ? self::buildImplant($crownTop, $uid, $interactive)
             : self::buildCrownFaces(
                 $code,
                 $crownTop,
@@ -61,7 +63,8 @@ final class ToothSvgBuilder
                 $conditionColors,
                 $missing,
                 $crown,
-                $wholeCode, // tinte de corona para condiciones de pieza completa
+                $wholeCode,
+                $interactive,
             );
 
         $extractionMark = $extraction ? self::diagonalCross($crownTop, '#9C2B44') : '';
@@ -70,18 +73,25 @@ final class ToothSvgBuilder
             ? sprintf('<rect x="30" y="%d" width="40" height="4" rx="2" fill="#5B67C7"/>', $bridgeY)
             : '';
 
-        $numberBlock = self::buildNumberBlock($code, $numberY, $shownNumber);
+        $numberBlock = self::buildNumberBlock($code, $numberY, $shownNumber, $interactive);
+
+        $ink = $interactive ? 'var(--ink)' : self::PDF_INK;
+        $noteIndicator = $hasNote
+            ? sprintf('<circle cx="88" cy="%d" r="4" fill="#F59E0B" stroke="%s" stroke-width="1"/>', $numberY + 0.5, $ink)
+            : '';
 
         $crownOpacity = $missing ? '0.45' : '1';
         $crownGroup = "<g opacity=\"{$crownOpacity}\">{$crownContent}{$extractionMark}{$missingMark}</g>";
         $rootGroup = "<g opacity=\"{$crownOpacity}\">{$rootPoly}</g>";
 
-        $svgBody = $defs.$numberBlock.$rootGroup.$crownGroup.$bridgeMark;
+        $svgBody = $defs.$numberBlock.$rootGroup.$crownGroup.$bridgeMark.$noteIndicator;
 
-        return "<svg viewBox=\"0 0 100 180\" class=\"tooth-svg\" xmlns=\"http://www.w3.org/2000/svg\">{$svgBody}</svg>";
+        $class = $interactive ? ' class="tooth-svg"' : '';
+
+        return "<svg viewBox=\"0 0 100 180\"{$class} xmlns=\"http://www.w3.org/2000/svg\">{$svgBody}</svg>";
     }
 
-    private static function buildRoots(int $nRoots, float $rootBaseY, float $rootApexY, string $uid, bool $endo): string
+    private static function buildRoots(int $nRoots, float $rootBaseY, float $rootApexY, string $uid, bool $endo, bool $interactive = true): string
     {
         $trunkY = $rootBaseY + ($rootApexY - $rootBaseY) * 0.20;
 
@@ -103,11 +113,13 @@ final class ToothSvgBuilder
             ];
         }
 
+        $ink = $interactive ? 'var(--ink)' : self::PDF_INK;
         $paths = array_map(
             fn (string $d) => sprintf(
-                '<path d="%s" fill="url(#rootgrad-%s)" stroke="var(--ink)" stroke-width="1.6" stroke-linejoin="round"/>',
+                '<path d="%s" fill="url(#rootgrad-%s)" stroke="%s" stroke-width="1.6" stroke-linejoin="round"/>',
                 $d,
-                $uid
+                $uid,
+                $ink
             ),
             $parts
         );
@@ -175,19 +187,27 @@ final class ToothSvgBuilder
         bool $missing,
         bool $crownRing,
         ?string $wholeCode = null,
+        bool $interactive = true,
     ): string {
         $divider = 'rgba(15,42,48,0.32)';
         $fill = fn (string $face) => $faceMap[$face] === ToothCondition::CODE_SANO ? '#FFFFFF' : ($conditionColors[$faceMap[$face]] ?? '#FFFFFF');
 
-        $zone = function (string $face, string $points) use ($code, $crownTop, $divider, $fill) {
+        $zone = function (string $face, string $points) use ($code, $crownTop, $divider, $fill, $interactive) {
             $shifted = self::shift($points, $crownTop);
-            $name = self::FACE_NAMES[$face];
+            $name = ToothCondition::FACE_LABELS[$face];
+
+            if ($interactive) {
+                return sprintf(
+                    '<polygon class="zone" data-face="%s" points="%s" fill="%s" stroke="%s" stroke-width="1" title="%s" '
+                    .'@click="$wire.selectZone(%d, \'%s\')" '
+                    .'@mouseover="hover = {code: %d, face: \'%s\'}" @mouseout="hover = null"/>',
+                    $face, $shifted, $fill($face), $divider, $name, $code, $face, $code, $name
+                );
+            }
 
             return sprintf(
-                '<polygon class="zone" data-face="%s" points="%s" fill="%s" stroke="%s" stroke-width="1" title="%s" '
-                .'@click="$wire.selectZone(%d, \'%s\')" '
-                .'@mouseover="hover = {code: %d, face: \'%s\'}" @mouseout="hover = null"/>',
-                $face, $shifted, $fill($face), $divider, $name, $code, $face, $code, $name
+                '<polygon points="%s" fill="%s" stroke="%s" stroke-width="1"/>',
+                $shifted, $fill($face), $divider
             );
         };
 
@@ -214,9 +234,11 @@ final class ToothSvgBuilder
             $crownTop + 1.5
         ) : '';
 
+        $ink = $interactive ? 'var(--ink)' : self::PDF_INK;
+
         return sprintf(
             '<g clip-path="url(#clip-%s)">%s%s%s%s%s%s%s</g>'
-            .'<rect x="4" y="%s" width="92" height="92" rx="20" ry="20" fill="none" stroke="var(--ink)" stroke-width="1.6"/>%s',
+            .'<rect x="4" y="%s" width="92" height="92" rx="20" ry="20" fill="none" stroke="%s" stroke-width="1.6"/>%s',
             $uid,
             $zone('v', '6,6 94,6 50,50'),
             $zone('d', '94,6 94,94 50,50'),
@@ -226,21 +248,23 @@ final class ToothSvgBuilder
             $ellipse,
             $tintRect,
             $crownTop + 4,
+            $ink,
             $outerRing
         );
     }
 
-    private static function buildImplant(float $crownTop, string $uid): string
+    private static function buildImplant(float $crownTop, string $uid, bool $interactive = true): string
     {
         $points = self::shift('50,8 88,29 88,71 50,92 12,71 12,29', $crownTop);
+        $ink = $interactive ? 'var(--ink)' : self::PDF_INK;
 
         return sprintf(
-            '<polygon points="%s" fill="url(#implgrad-%s)" stroke="var(--ink)" stroke-width="1.5" stroke-linejoin="round"/>'
+            '<polygon points="%s" fill="url(#implgrad-%s)" stroke="%s" stroke-width="1.5" stroke-linejoin="round"/>'
             .'<line x1="50" y1="%s" x2="50" y2="%s" stroke="#AEB9C4" stroke-width="2"/>'
             .'<line x1="26" y1="%s" x2="74" y2="%s" stroke="#AEB9C4" stroke-width="1.5"/>'
             .'<line x1="22" y1="%s" x2="78" y2="%s" stroke="#AEB9C4" stroke-width="2"/>'
             .'<line x1="26" y1="%s" x2="74" y2="%s" stroke="#AEB9C4" stroke-width="1.5"/>',
-            $points, $uid,
+            $points, $uid, $ink,
             $crownTop + 15, $crownTop + 85,
             $crownTop + 38, $crownTop + 38,
             $crownTop + 50, $crownTop + 50,
@@ -258,19 +282,33 @@ final class ToothSvgBuilder
         );
     }
 
-    private static function buildNumberBlock(int $code, float $numberY, string $shownNumber): string
+    private static function buildNumberBlock(int $code, float $numberY, string $shownNumber, bool $interactive = true): string
     {
+        $surfaceAlt = $interactive ? 'var(--surface-alt)' : self::PDF_SURFACE_ALT;
+        $border = $interactive ? 'var(--border)' : self::PDF_BORDER;
+        $ink = $interactive ? 'var(--ink)' : self::PDF_INK;
+
         $plate = sprintf(
-            '<rect x="34" y="%s" width="32" height="19" rx="9.5" fill="var(--surface-alt)" stroke="var(--border)" stroke-width="1"/>',
-            $numberY - 10
+            '<rect x="34" y="%s" width="32" height="19" rx="9.5" fill="%s" stroke="%s" stroke-width="1"/>',
+            $numberY - 10,
+            $surfaceAlt,
+            $border
         );
+
+        if ($interactive) {
+            return $plate.sprintf(
+                '<text x="50" y="%s" text-anchor="middle" dominant-baseline="middle" '
+                .'font-family="\'JetBrains Mono\',monospace" font-size="15" font-weight="700" fill="%s" '
+                .'style="cursor:pointer" @click="$wire.selectZone(%d, \'numero\')" '
+                .'@mouseover="hover = {code: %d, face: \'Pieza completa\'}" @mouseout="hover = null">%s</text>',
+                $numberY + 0.5, $ink, $code, $code, e($shownNumber)
+            );
+        }
 
         return $plate.sprintf(
             '<text x="50" y="%s" text-anchor="middle" dominant-baseline="middle" '
-            .'font-family="\'JetBrains Mono\',monospace" font-size="15" font-weight="700" fill="var(--ink)" '
-            .'style="cursor:pointer" @click="$wire.selectZone(%d, \'numero\')" '
-            .'@mouseover="hover = {code: %d, face: \'Pieza completa\'}" @mouseout="hover = null">%s</text>',
-            $numberY + 0.5, $code, $code, e($shownNumber)
+            .'font-family="\'JetBrains Mono\',monospace" font-size="15" font-weight="700" fill="%s">%s</text>',
+            $numberY + 0.5, $ink, e($shownNumber)
         );
     }
 

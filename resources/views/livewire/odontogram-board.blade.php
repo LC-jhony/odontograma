@@ -1,4 +1,4 @@
-<div x-data="{ hover: null }" class="space-y-6">
+<div x-data="{ hover: null }" x-on:schedule-clear-save-message.window="setTimeout(() => $wire.clearSaveMessage(), 3000)" x-on:beforeunload.window="if ($wire.get('pending').length > 0) event.preventDefault()" x-on:open-pdf.window="window.location.href = event.detail.url" class="space-y-6">
 
     {{-- Toolbar: paciente, dentición, numeración, guardar --}}
     <div class="flex flex-wrap items-center justify-between gap-4">
@@ -43,6 +43,26 @@
                 class="inline-flex items-center gap-1.5 rounded-lg bg-success-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-success-500">
                 Guardar
             </button>
+
+            <button type="button" wire:click="exportPdf"
+                class="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-50">
+                Exportar PDF
+            </button>
+        </div>
+    </div>
+
+    {{-- Notas del odontograma y fecha de examen --}}
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div>
+            <label for="examinedAt" class="mb-1 block text-xs font-semibold text-gray-600">Fecha de examen</label>
+            <input type="date" wire:model="examinedAt" id="examinedAt"
+                class="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm" />
+        </div>
+        <div>
+            <label for="notes" class="mb-1 block text-xs font-semibold text-gray-600">Notas del odontograma</label>
+            <textarea wire:model="notes" id="notes" rows="2"
+                class="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm"
+                placeholder="Observaciones generales del examen..."></textarea>
         </div>
     </div>
 
@@ -64,7 +84,13 @@
     <div class="flex justify-center overflow-x-auto pb-1">
         <div class="flex gap-1 sm:gap-2">
             @foreach ($this->definitions['upper'] ?? [] as $definition)
-                <div class="tooth-wrap">{!! $this->toothSvg($definition) !!}</div>
+                <div class="tooth-wrap group relative">
+                    {!! $this->toothSvg($definition) !!}
+                    <button type="button"
+                        wire:click="openToothNote({{ $definition->fdi_code }})"
+                        class="absolute -top-1 -right-1 hidden h-4 w-4 items-center justify-center rounded-full bg-amber-400 text-[8px] font-bold text-white shadow group-hover:flex"
+                        title="Nota del diente">N</button>
+                </div>
             @endforeach
         </div>
     </div>
@@ -79,7 +105,13 @@
     <div class="flex justify-center overflow-x-auto pt-1">
         <div class="flex gap-1 sm:gap-2">
             @foreach ($this->definitions['lower'] ?? [] as $definition)
-                <div class="tooth-wrap">{!! $this->toothSvg($definition) !!}</div>
+                <div class="tooth-wrap group relative">
+                    {!! $this->toothSvg($definition) !!}
+                    <button type="button"
+                        wire:click="openToothNote({{ $definition->fdi_code }})"
+                        class="absolute -top-1 -right-1 hidden h-4 w-4 items-center justify-center rounded-full bg-amber-400 text-[8px] font-bold text-white shadow group-hover:flex"
+                        title="Nota del diente">N</button>
+                </div>
             @endforeach
         </div>
     </div>
@@ -131,7 +163,17 @@
     @if ($saveMessage)
         <div wire:transition class="text-xs font-semibold text-success-600">{{ $saveMessage }}</div>
     @elseif (count($pending) > 0)
-        <div wire:transition class="text-xs font-semibold text-amber-600">Hay cambios sin guardar</div>
+        <div wire:transition class="flex items-center gap-3 text-xs font-semibold text-amber-600">
+            <span>Hay {{ count($pending) }} cambio(s) sin guardar</span>
+            <button type="button" wire:click="undoPending"
+                class="rounded-lg border border-amber-300 px-2 py-0.5 text-[10px] font-semibold text-amber-700 hover:bg-amber-50">
+                Deshacer
+            </button>
+            <button type="button" wire:click="discardPending"
+                class="rounded-lg border border-red-300 px-2 py-0.5 text-[10px] font-semibold text-red-700 hover:bg-red-50">
+                Descartar todo
+            </button>
+        </div>
     @endif
 
     {{-- Modal de observación al re-tratar una zona ya tratada --}}
@@ -159,6 +201,34 @@
                         wire:click="submitObservation"
                         class="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-500"
                     >Guardar observación</button>
+                </div>
+            </div>
+        </div>
+    @endif
+
+    {{-- Modal de nota por diente --}}
+    @if ($showToothNoteModal)
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div class="w-full max-w-md rounded-xl bg-white p-5 shadow-xl">
+                <h3 class="text-sm font-semibold">Nota del diente</h3>
+                <p class="mt-1 text-xs text-gray-500">Pieza {{ $toothNoteFdiCode }}</p>
+                <textarea
+                    wire:model="toothNoteText"
+                    rows="4"
+                    class="mt-3 w-full rounded-lg border border-gray-300 p-2 text-sm"
+                    placeholder="Escriba una nota para esta pieza dental..."
+                ></textarea>
+                <div class="mt-4 flex justify-end gap-2">
+                    <button
+                        type="button"
+                        wire:click="cancelToothNote"
+                        class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                    >Cancelar</button>
+                    <button
+                        type="button"
+                        wire:click="saveToothNote"
+                        class="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-500"
+                    >Guardar nota</button>
                 </div>
             </div>
         </div>
