@@ -32,6 +32,15 @@ class ToothCondition extends Model
 
     public const CODE_PUENTE = 'puente';
 
+    /** Etiquetas legibles de las caras dentales. */
+    public const FACE_LABELS = [
+        'v' => 'Vestibular',
+        'o' => 'Oclusal/Incisal',
+        'p' => 'Palatino/Lingual',
+        'm' => 'Mesial',
+        'd' => 'Distal',
+    ];
+
     protected $fillable = ['code', 'label', 'color', 'target', 'category', 'sort_order'];
 
     public function appliesToFace(): bool

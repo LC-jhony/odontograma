@@ -190,3 +190,119 @@ it('abre el modal al re-clicar el cuerpo de una pieza ya tratada', function (): 
     expect($odontogram->treatmentLog()->count())->toBe(0);
     expect($odontogram->teeth()->where('fdi_code', 11)->first()->whole_condition_id)->toBe($extraccion->id);
 });
+
+it('deshace la última acción pendiente', function (): void {
+    $patient = Patient::create(['first_name' => 'Hugo', 'last_name' => 'Salas']);
+    $odontogram = $patient->odontogram()->create(['dentition' => 'adult', 'numbering_system' => 'fdi']);
+    $caries = makeCondition('caries', 'Caries', 'face');
+    makeCondition('obturacion', 'Obturación', 'face');
+
+    $component = Livewire::test(OdontogramBoard::class, ['patient' => $patient]);
+
+    $component->set('activeCondition', 'caries')
+        ->call('selectZone', 11, 'v')
+        ->assertSet('pending', [['fdi_code' => 11, 'face' => 'v', 'action' => 'apply', 'condition_code' => 'caries', 'observation' => null]]);
+
+    $component->set('activeCondition', 'obturacion')
+        ->call('selectZone', 12, 'o')
+        ->assertSet('pending', fn ($p) => count($p) === 2);
+
+    $component->call('undoPending')
+        ->assertSet('pending', fn ($p) => count($p) === 1);
+
+    $component->call('undoPending')
+        ->assertSet('pending', fn ($p) => count($p) === 0);
+
+    // Undo on empty list does nothing.
+    $component->call('undoPending')
+        ->assertSet('pending', fn ($p) => count($p) === 0);
+});
+
+it('descarta todos los cambios pendientes', function (): void {
+    $patient = Patient::create(['first_name' => 'Irene', 'last_name' => 'Ramos']);
+    $odontogram = $patient->odontogram()->create(['dentition' => 'adult', 'numbering_system' => 'fdi']);
+    $caries = makeCondition('caries', 'Caries', 'face');
+
+    $component = Livewire::test(OdontogramBoard::class, ['patient' => $patient]);
+
+    $component->set('activeCondition', 'caries')
+        ->call('selectZone', 11, 'v')
+        ->call('selectZone', 12, 'o')
+        ->assertSet('pending', fn ($p) => count($p) === 2);
+
+    $component->call('discardPending')
+        ->assertSet('pending', fn ($p) => count($p) === 0);
+
+    // Nothing persisted.
+    expect($odontogram->teeth()->count())->toBe(0);
+});
+
+it('guarda notas del odontograma y fecha de examen', function (): void {
+    $patient = Patient::create(['first_name' => 'Jorge', 'last_name' => 'Luna']);
+    $odontogram = $patient->odontogram()->create(['dentition' => 'adult', 'numbering_system' => 'fdi']);
+
+    Livewire::test(OdontogramBoard::class, ['patient' => $patient])
+        ->set('notes', 'Paciente con sensibilidad en pieza 16')
+        ->set('examinedAt', '2025-03-15')
+        ->call('save');
+
+    $odontogram->refresh();
+    expect($odontogram->notes)->toBe('Paciente con sensibilidad en pieza 16');
+    expect($odontogram->examined_at->format('Y-m-d'))->toBe('2025-03-15');
+});
+
+it('abre y guarda nota por diente', function (): void {
+    $patient = Patient::create(['first_name' => 'Karen', 'last_name' => 'Reyes']);
+    $odontogram = $patient->odontogram()->create(['dentition' => 'adult', 'numbering_system' => 'fdi']);
+
+    $component = Livewire::test(OdontogramBoard::class, ['patient' => $patient]);
+
+    $component->call('openToothNote', 11)
+        ->assertSet('showToothNoteModal', true)
+        ->assertSet('toothNoteFdiCode', 11)
+        ->assertSet('toothNoteText', '');
+
+    $component->set('toothNoteText', 'Fractura marginal detectada')
+        ->call('saveToothNote')
+        ->assertSet('showToothNoteModal', false);
+
+    $tooth = $odontogram->teeth()->where('fdi_code', 11)->first();
+    expect($tooth)->not->toBeNull();
+    expect($tooth->notes)->toBe('Fractura marginal detectada');
+});
+
+it('cancela edición de nota por diente sin guardar', function (): void {
+    $patient = Patient::create(['first_name' => 'Luis', 'last_name' => 'Mora']);
+    $odontogram = $patient->odontogram()->create(['dentition' => 'adult', 'numbering_system' => 'fdi']);
+
+    Livewire::test(OdontogramBoard::class, ['patient' => $patient])
+        ->call('openToothNote', 11)
+        ->set('toothNoteText', 'Nota que no se guarda')
+        ->call('cancelToothNote')
+        ->assertSet('showToothNoteModal', false)
+        ->assertSet('toothNoteText', '');
+
+    expect($odontogram->teeth()->where('fdi_code', 11)->count())->toBe(0);
+});
+
+it('genera PDF sin errores', function (): void {
+    $patient = Patient::create(['first_name' => 'Mario', 'last_name' => 'Castillo']);
+    $odontogram = $patient->odontogram()->create(['dentition' => 'adult', 'numbering_system' => 'fdi']);
+    $caries = makeCondition('caries', 'Caries', 'face');
+    $corona = makeCondition('corona', 'Corona', 'tooth');
+
+    Livewire::test(OdontogramBoard::class, ['patient' => $patient])
+        ->set('activeCondition', 'caries')
+        ->call('selectZone', 11, 'v')
+        ->set('activeCondition', 'corona')
+        ->call('selectZone', 21, 'numero')
+        ->set('notes', 'Paciente con caries en pieza 11')
+        ->set('examinedAt', '2025-06-01')
+        ->call('save');
+
+    $component = Livewire::test(OdontogramBoard::class, ['patient' => $patient]);
+    $component->call('exportPdf');
+
+    // Assert the dispatch event was fired (download-pdf).
+    $component->assertDispatched('download-pdf');
+});
